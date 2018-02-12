@@ -39,7 +39,7 @@ class SpeedTalonConfiguration extends PIDTalonConfiguration {
       Integer iZone) {
     super(
         name,
-        ControlMode.Position,
+        ControlMode.Velocity,
         setpointMax,
         encoder,
         neutralMode,
