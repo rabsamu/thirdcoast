@@ -1,11 +1,14 @@
 package org.strykeforce.thirdcoast.swerve;
 
+import static com.ctre.phoenix.motorcontrol.ControlMode.MotionMagic;
+import static com.ctre.phoenix.motorcontrol.ControlMode.PercentOutput;
+import static com.ctre.phoenix.motorcontrol.ControlMode.Velocity;
 import static org.strykeforce.thirdcoast.swerve.SwerveDrive.DriveMode.OPEN_LOOP;
 
 import com.ctre.phoenix.ErrorCode;
-import com.ctre.phoenix.motorcontrol.ControlMode;
 import com.ctre.phoenix.motorcontrol.can.TalonSRX;
 import com.moandjiezana.toml.Toml;
+import java.util.function.DoubleConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.strykeforce.thirdcoast.swerve.SwerveDrive.DriveMode;
@@ -33,20 +36,17 @@ import org.strykeforce.thirdcoast.util.Settings;
 public class Wheel {
 
   private static final String TABLE = "THIRDCOAST.WHEEL";
+  private static final int TICKS = 4096;
   private static final Logger logger = LoggerFactory.getLogger(Wheel.class);
 
-  private final double kTicksPerRevolution;
   private final double kDriveSetpointMax;
-  private final ControlMode kAzimuthControlMode;
-  private final ControlMode kDriveOpenLoopControlMode;
-  private final ControlMode kDriveClosedLoopControlMode;
 
   private final TalonSRX azimuthTalon;
   private final TalonSRX driveTalon;
-  private final int[] profileSlotSetpoint = new int[4];
-  private double azimuthSetpoint;
-  private double driveSetpoint;
-  private ControlMode driveControlMode;
+
+  private final DoubleConsumer openLoopDriver;
+  private final DoubleConsumer closedLoopDriver;
+  private DoubleConsumer currentDriver;
 
   /**
    * This designated constructor constructs a wheel by supplying azimuth and drive talons. They are
@@ -59,23 +59,23 @@ public class Wheel {
   public Wheel(Settings settings, TalonSRX azimuth, TalonSRX drive) {
 
     Toml toml = settings.getTable(TABLE);
-    kTicksPerRevolution = (double) toml.getLong("ticksPerRevolution");
     kDriveSetpointMax = (double) toml.getLong("driveSetpointMax");
-    kAzimuthControlMode = ControlMode.valueOf(toml.getString("azimuthControlMode"));
-    kDriveOpenLoopControlMode = ControlMode.valueOf(toml.getString("driveOpenLoopControlMode"));
-    kDriveClosedLoopControlMode = ControlMode.valueOf(toml.getString("driveClosedLoopControlMode"));
 
     azimuthTalon = azimuth;
     driveTalon = drive;
 
+    openLoopDriver = (setpoint) -> driveTalon.set(PercentOutput, setpoint);
+    closedLoopDriver = (setpoint) -> driveTalon.set(Velocity, setpoint * kDriveSetpointMax);
+
+    if (azimuthTalon == null || driveTalon == null) {
+      logger.error("Talons missing, aborting initialization");
+      return;
+    }
+
     setDriveMode(OPEN_LOOP);
 
     logger.debug("azimuth = {} drive = {}", azimuthTalon.getDeviceID(), driveTalon.getDeviceID());
-    logger.debug("ticksPerRevolution = {}", kTicksPerRevolution);
     logger.debug("driveSetpointMax = {}", kDriveSetpointMax);
-    logger.debug("azimuthControlMode = {}", kAzimuthControlMode);
-    logger.debug("driveOpenLoopControlMode = {}", kDriveOpenLoopControlMode);
-    logger.debug("driveClosedLoopControlMode = {}", kDriveClosedLoopControlMode);
   }
 
   /**
@@ -101,34 +101,26 @@ public class Wheel {
    * @param drive 0 to 1.0 in the direction of the wheel azimuth
    */
   public void set(double azimuth, double drive) {
-    if (driveControlMode == kDriveOpenLoopControlMode) {
-      driveSetpoint = drive;
-    } else {
-      driveSetpoint = drive * kDriveSetpointMax;
-      selectProfileSlot();
-    }
-    azimuth = -azimuth; // azimuth hardware configuration dependent
-
     // don't reset wheel azimuth direction to zero when returning to neutral
-    if (driveSetpoint == 0) {
-      driveTalon.set(driveControlMode, 0);
+    if (drive == 0) {
+      currentDriver.accept(0d);
       return;
     }
 
+    azimuth *= -TICKS; // flip azimuth, hardware configuration dependent
+
     double azimuthPosition = azimuthTalon.getSelectedSensorPosition(0);
-    double azimuthError =
-        Math.IEEEremainder(azimuth * kTicksPerRevolution - azimuthPosition, kTicksPerRevolution);
-    if (Math.abs(azimuthError) > 0.25 * kTicksPerRevolution) {
-      azimuthError -= Math.copySign(0.5 * kTicksPerRevolution, azimuthError);
-      driveSetpoint = -driveSetpoint;
+    double azimuthError = Math.IEEEremainder(azimuth - azimuthPosition, TICKS);
+
+    // minimize azimuth rotation, reversing drive if necessary
+    if (Math.abs(azimuthError) > 0.25 * TICKS) {
+      azimuthError -= Math.copySign(0.5 * TICKS, azimuthError);
+      drive = -drive;
     }
-    azimuthSetpoint = azimuthPosition + azimuthError;
 
-    azimuthTalon.set(kAzimuthControlMode, azimuthSetpoint);
-    driveTalon.set(driveControlMode, driveSetpoint);
+    azimuthTalon.set(MotionMagic, azimuthPosition + azimuthError);
+    currentDriver.accept(drive);
   }
-
-  void selectProfileSlot() {}
 
   /**
    * Set the drive mode
@@ -138,10 +130,10 @@ public class Wheel {
   public void setDriveMode(DriveMode driveMode) {
     switch (driveMode) {
       case OPEN_LOOP:
-        driveControlMode = kDriveOpenLoopControlMode;
+        currentDriver = openLoopDriver;
         break;
       case CLOSED_LOOP:
-        driveControlMode = kDriveClosedLoopControlMode;
+        currentDriver = closedLoopDriver;
         break;
     }
   }
@@ -151,9 +143,8 @@ public class Wheel {
    * current position in case the wheel has been manually rotated away from its previous setpoint.
    */
   public void stop() {
-    azimuthSetpoint = azimuthTalon.getSelectedSensorPosition(0);
-    azimuthTalon.set(kAzimuthControlMode, azimuthSetpoint);
-    driveTalon.set(driveControlMode, 0);
+    azimuthTalon.set(MotionMagic, azimuthTalon.getSelectedSensorPosition(0));
+    currentDriver.accept(0d);
   }
 
   /**
@@ -162,39 +153,14 @@ public class Wheel {
    * @param zero encoder position (in ticks) where wheel is zeroed.
    */
   public void setAzimuthZero(int zero) {
-    azimuthSetpoint = (double) (getAzimuthAbsolutePosition() - zero);
+    if (azimuthTalon == null) {
+      logger.error("azimuth Talon not present, aborting setAzimuthZero(int)");
+      return;
+    }
+    int azimuthSetpoint = getAzimuthAbsolutePosition() - zero;
     ErrorCode e = azimuthTalon.setSelectedSensorPosition((int) azimuthSetpoint, 0, 10);
     Errors.check(e, logger);
-    azimuthTalon.set(kAzimuthControlMode, azimuthSetpoint);
-  }
-
-  /**
-   * Return the azimuth position setpoint. Note this may differ from the actual position if the
-   * wheel is still rotating into position.
-   *
-   * @return azimuth setpoint
-   */
-  public double getAzimuthSetpoint() {
-    return azimuthSetpoint;
-  }
-
-  //  /**
-  //   * Return the drive speed setpoint. Note this may differ from the actual speed if the wheel is
-  //   * accelerating.
-  //   *
-  //   * @return speed setpoint
-  //   */
-  //  public double getDriveSetpoint() {
-  //    return driveSetpoint;
-  //  }
-
-  /**
-   * Indicates if the wheel has reversed drive direction to optimize azimuth rotation.
-   *
-   * @return true if reversed
-   */
-  public boolean isDriveReversed() {
-    return driveSetpoint < 0;
+    azimuthTalon.set(MotionMagic, azimuthSetpoint);
   }
 
   /**
@@ -203,6 +169,10 @@ public class Wheel {
    * @return 0 - 4095 encoder ticks
    */
   public int getAzimuthAbsolutePosition() {
+    if (azimuthTalon == null) {
+      logger.error("azimuth Talon not present, returning 0 for getAzimuthAbsolutePosition()");
+      return 0;
+    }
     return azimuthTalon.getSensorCollection().getPulseWidthPosition() & 0xFFF;
   }
 
@@ -224,29 +194,8 @@ public class Wheel {
     return driveTalon;
   }
 
-  /**
-   * Get encoder ticks per Azimuth revolution.
-   *
-   * @return number of encoder ticks
-   */
-  public int getTicksPerRevolution() {
-    return (int) kTicksPerRevolution;
-  }
-
   public double getDriveSetpointMax() {
     return kDriveSetpointMax;
-  }
-
-  public ControlMode getAzimuthControlMode() {
-    return kAzimuthControlMode;
-  }
-
-  public ControlMode getDriveOpenLoopControlMode() {
-    return kDriveOpenLoopControlMode;
-  }
-
-  public ControlMode getDriveClosedLoopControlMode() {
-    return kDriveClosedLoopControlMode;
   }
 
   @Override
