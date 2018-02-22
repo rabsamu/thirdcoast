@@ -21,7 +21,7 @@ class WheelTest extends Specification {
     //
     def "defaults are configured"() {
         when:
-        def wheel = new Wheel(new Settings(), azimuth, drive)
+        def wheel = new DefaultWheel(new Settings(), azimuth, drive)
 
         then:
         with(wheel) {
@@ -35,7 +35,7 @@ class WheelTest extends Specification {
         def toml = "[THIRDCOAST.WHEEL]\ndriveSetpointMax = 2767"
 
         when:
-        def wheel = new Wheel(new Settings(toml), azimuth, drive)
+        def wheel = new DefaultWheel(new Settings(toml), azimuth, drive)
 
         then:
         with(wheel) {
@@ -54,7 +54,7 @@ class WheelTest extends Specification {
         sensorCollection.getPulseWidthPosition() >> 0x1000
 
         when:
-        def wheel = new Wheel(new Settings(), azimuth, drive)
+        def wheel = new DefaultWheel(new Settings(), azimuth, drive)
 
         then:
         wheel.azimuthAbsolutePosition == 0
@@ -72,7 +72,7 @@ class WheelTest extends Specification {
     def "azimuth changes are optimized"() {
         when:
         azimuth.getSelectedSensorPosition(0) >> start_position * ROT
-        def wheel = new Wheel(new Settings(), azimuth, drive)
+        def wheel = new DefaultWheel(new Settings(), azimuth, drive)
         wheel.set(setpoint, 1d)
 
         then:
@@ -127,7 +127,7 @@ class WheelTest extends Specification {
     def "drive output is scaled"() {
         when:
         def tomlStr = "[THIRDCOAST.WHEEL]\ndriveSetpointMax=10_000"
-        def wheel = new Wheel(new Settings(tomlStr), azimuth, drive)
+        def wheel = new DefaultWheel(new Settings(tomlStr), azimuth, drive)
         wheel.setDriveMode(CLOSED_LOOP)
         wheel.set(0, setpoint)
 
@@ -143,9 +143,10 @@ class WheelTest extends Specification {
         -0.5     || -5_000.0
     }
 
+
     def "neutral drive output leaves azimuths in previous position"() {
         when:
-        def wheel = new Wheel(new Settings(), azimuth, drive)
+        def wheel = new DefaultWheel(new Settings(), azimuth, drive)
         wheel.set(0, 0)
 
         then:

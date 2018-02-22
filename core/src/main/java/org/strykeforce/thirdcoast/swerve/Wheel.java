@@ -1,8 +1,6 @@
 package org.strykeforce.thirdcoast.swerve;
 
 import static com.ctre.phoenix.motorcontrol.ControlMode.MotionMagic;
-import static com.ctre.phoenix.motorcontrol.ControlMode.PercentOutput;
-import static com.ctre.phoenix.motorcontrol.ControlMode.Velocity;
 import static org.strykeforce.thirdcoast.swerve.SwerveDrive.DriveMode.OPEN_LOOP;
 
 import com.ctre.phoenix.ErrorCode;
@@ -14,7 +12,6 @@ import org.slf4j.LoggerFactory;
 import org.strykeforce.thirdcoast.swerve.SwerveDrive.DriveMode;
 import org.strykeforce.thirdcoast.talon.Errors;
 import org.strykeforce.thirdcoast.talon.TalonConfiguration;
-import org.strykeforce.thirdcoast.talon.Talons;
 import org.strykeforce.thirdcoast.util.Settings;
 
 /**
@@ -33,20 +30,15 @@ import org.strykeforce.thirdcoast.util.Settings;
  * limits on wheel azimuth rotation. Azimuth Talons have an ID in the range 0-3 with corresponding
  * drive Talon IDs in the range 10-13.
  */
-public class Wheel {
+public abstract class Wheel {
 
+  static final Logger logger = LoggerFactory.getLogger(Wheel.class);
   private static final String TABLE = "THIRDCOAST.WHEEL";
   private static final int TICKS = 4096;
-  private static final Logger logger = LoggerFactory.getLogger(Wheel.class);
-
-  private final double kDriveSetpointMax;
-
+  protected final double kDriveSetpointMax;
+  protected final TalonSRX driveTalon;
   private final TalonSRX azimuthTalon;
-  private final TalonSRX driveTalon;
-
-  private final DoubleConsumer openLoopDriver;
-  private final DoubleConsumer closedLoopDriver;
-  private DoubleConsumer currentDriver;
+  protected DoubleConsumer currentDriver;
 
   /**
    * This designated constructor constructs a wheel by supplying azimuth and drive talons. They are
@@ -64,9 +56,6 @@ public class Wheel {
     azimuthTalon = azimuth;
     driveTalon = drive;
 
-    openLoopDriver = (setpoint) -> driveTalon.set(PercentOutput, setpoint);
-    closedLoopDriver = (setpoint) -> driveTalon.set(Velocity, setpoint * kDriveSetpointMax);
-
     if (azimuthTalon == null || driveTalon == null) {
       logger.error("Talons missing, aborting initialization");
       return;
@@ -76,17 +65,6 @@ public class Wheel {
 
     logger.debug("azimuth = {} drive = {}", azimuthTalon.getDeviceID(), driveTalon.getDeviceID());
     logger.debug("driveSetpointMax = {}", kDriveSetpointMax);
-  }
-
-  /**
-   * Convenience constructor for a wheel by specifying the swerve driveTalon wheel number (0-3).
-   *
-   * @param talons the TalonFactory used to create Talons
-   * @param settings the settings from TOML config file
-   * @param index the wheel number
-   */
-  public Wheel(Talons talons, Settings settings, int index) {
-    this(settings, talons.getTalon(index), talons.getTalon(index + 10));
   }
 
   /**
@@ -123,20 +101,23 @@ public class Wheel {
   }
 
   /**
+   * Set azimuth to encoder position.
+   * @param position position in encoder ticks.
+   */
+  public void setAzimuthPosition(int position) {
+    azimuthTalon.set(MotionMagic, position);
+  }
+
+  public void disableAzimuth() {
+    azimuthTalon.neutralOutput();
+  }
+
+  /**
    * Set the drive mode
    *
    * @param driveMode the drive mode
    */
-  public void setDriveMode(DriveMode driveMode) {
-    switch (driveMode) {
-      case OPEN_LOOP:
-        currentDriver = openLoopDriver;
-        break;
-      case CLOSED_LOOP:
-        currentDriver = closedLoopDriver;
-        break;
-    }
-  }
+  public abstract void setDriveMode(DriveMode driveMode);
 
   /**
    * Stop azimuth and drive movement. This resets the azimuth setpoint and relative encoder to the
@@ -158,8 +139,8 @@ public class Wheel {
       return;
     }
     int azimuthSetpoint = getAzimuthAbsolutePosition() - zero;
-    ErrorCode e = azimuthTalon.setSelectedSensorPosition((int) azimuthSetpoint, 0, 10);
-    Errors.check(e, logger);
+    ErrorCode err = azimuthTalon.setSelectedSensorPosition(azimuthSetpoint, 0, 10);
+    Errors.check(err, logger);
     azimuthTalon.set(MotionMagic, azimuthSetpoint);
   }
 
