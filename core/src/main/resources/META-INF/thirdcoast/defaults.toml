@@ -10,8 +10,11 @@
   driveClosedLoopControlMode = "Velocity"
 
 [THIRDCOAST.SWERVE]
-  length = 1.0
-  width  = 1.0
+  gyroRateCoeff     = 0.0
+  robotPeriod       = 0.02
+  enableGyroLogging = true
+  length            = 1.0
+  width             = 1.0
 
 [THIRDCOAST.TALONS]
   timeout = 10
