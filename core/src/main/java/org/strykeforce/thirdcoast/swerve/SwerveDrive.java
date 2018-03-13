@@ -51,7 +51,6 @@ public class SwerveDrive {
 
     Toml toml = settings.getTable(TABLE);
     boolean enableGyroLogging = toml.getBoolean("enableGyroLogging", true);
-    if (gyro != null) gyro.enableLogging(enableGyroLogging);
 
     double length = toml.getDouble("length");
     double width = toml.getDouble("width");
@@ -59,14 +58,18 @@ public class SwerveDrive {
     kLengthComponent = length / radius;
     kWidthComponent = width / radius;
 
-    if (gyro != null) {
+    if (gyro != null && gyro.isConnected()) {
+      gyro.enableLogging(enableGyroLogging);
       double robotPeriod = toml.getDouble("robotPeriod");
       double gyroRateCoeff = toml.getDouble("gyroRateCoeff");
       int rate = gyro.getActualUpdateRate();
       double gyroPeriod = 1.0 / rate;
       kGyroRateCorrection = (robotPeriod / gyroPeriod) * gyroRateCoeff;
       logger.debug("gyro frequency = {} Hz", rate);
-    } else kGyroRateCorrection = 0;
+    } else {
+      logger.warn("gyro is missing or not enabled");
+      kGyroRateCorrection = 0;
+    }
 
     logger.debug("length = {}", length);
     logger.debug("width = {}", width);
@@ -118,12 +121,12 @@ public class SwerveDrive {
    */
   public void drive(double forward, double strafe, double azimuth) {
 
-    // field-oriented
+    // Use gyro for field-oriented drive. We use getAngle instead of getYaw to enable arbitrary
+    // autonomous starting positions.
     if (gyro != null) {
-      double angle = gyro.getYaw();
+      double angle = gyro.getAngle();
       angle += gyro.getRate() * kGyroRateCorrection;
-      if (angle < -180d) angle += 360d;
-      else if (angle > 180d) angle -= 360d;
+      angle = Math.IEEEremainder(angle, 360.0);
 
       angle = Math.toRadians(angle);
       final double temp = forward * Math.cos(angle) + strafe * Math.sin(angle);
