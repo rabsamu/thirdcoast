@@ -6,7 +6,7 @@ import org.strykeforce.thirdcoast.util.Settings
 import spock.lang.Specification
 
 import static com.ctre.phoenix.motorcontrol.ControlMode.*
-import static org.strykeforce.thirdcoast.swerve.SwerveDrive.DriveMode.CLOSED_LOOP
+import static org.strykeforce.thirdcoast.swerve.SwerveDrive.DriveMode.TRAJECTORY
 
 class WheelTest extends Specification {
 
@@ -128,7 +128,7 @@ class WheelTest extends Specification {
         when:
         def tomlStr = "[THIRDCOAST.WHEEL]\ndriveSetpointMax=10_000"
         def wheel = new DefaultWheel(new Settings(tomlStr), azimuth, drive)
-        wheel.setDriveMode(CLOSED_LOOP)
+        wheel.setDriveMode(TRAJECTORY)
         wheel.set(0, setpoint)
 
         then:
@@ -152,62 +152,5 @@ class WheelTest extends Specification {
         then:
         0 * azimuth.set(_)
         1 * drive.set(PercentOutput, 0)
-    }
-
-    // check some wheel-related math
-    def "calculates error between current azimuth and setpoint"() {
-        expect:
-        Math.abs(Math.IEEEremainder(setpoint * ROT - position * ROT, ROT) - error * ROT) < EPSILON
-
-        where:
-        position | setpoint || error
-        0        | 0        || 0
-        0.25     | 0.25     || 0
-        0.25     | 0.5      || 0.25
-        0.25     | -0.25    || -0.5
-        0.25     | -0.5     || 0.25
-        -0.4     | 0.4      || -0.2
-        0.5      | -0.5     || 0
-        -0.5     | 0.5      || 0
-        -0.01    | 0.01     || 0.02
-        -0.4     | 0.2      || -0.4
-        -2.4     | 0.2      || -0.4
-    }
-
-    def "calculate minimal azimuth error with drive direction"() {
-        when:
-        def error = Math.IEEEremainder(setpoint * ROT - position * ROT, ROT)
-        def isReversed = false
-        if (Math.abs(error) > 0.25 * ROT) {
-            error -= Math.copySign(0.5 * ROT, error)
-            isReversed = true
-        }
-
-        then:
-        Math.abs(error - expected_error * ROT) < EPSILON
-        isReversed == expected_reverse
-        Math.abs(position * ROT + error - expected_position * ROT) < EPSILON
-
-        where:
-        setpoint | position || expected_error | expected_position | expected_reverse
-        0        | 0        || 0              | 0                 | false
-        0.25     | 0.5      || -0.25          | 0.25              | false
-        -0.5     | -0.25    || -0.25          | -0.5              | false
-        0.25     | -0.1     || -0.15          | -0.25             | true
-        -0.5     | 0.5      || 0              | 0.5               | false
-        -0.5     | 0.5      || 0              | 0.5               | false
-        0.49     | -0.5     || -0.01          | -0.51             | false
-        0        | 1.0      || 0              | 1.0               | false
-        0        | 1.1      || -0.1           | 1.0               | false
-        0.4      | -2.4     || -0.2           | -2.6              | false
-        0        | -0.4     || -0.1           | -0.5              | true
-        0.2      | -0.4     || 0.1            | -0.3              | true
-        0.2      | -2.4     || 0.1            | -2.3              | true
-        -0.2     | 0.4      || -0.1           | 0.3               | true
-        -0.2     | 2.4      || -0.1           | 2.3               | true
-        0.6      | 0        || 0.1            | 0.1               | true
-        -1.0     | 0.5      || 0.0            | 0.5               | true
-        1.5      | 0.5      || 0.0            | 0.5               | false
-
     }
 }
